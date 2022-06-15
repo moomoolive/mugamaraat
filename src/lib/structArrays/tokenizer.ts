@@ -50,17 +50,19 @@ const type_32bit = type_buffer()
 const type_16bit = type_buffer()
 const type_8bit = type_buffer()
 
+const res = (msg: string, token: null | StructToken = null) => ({token, msg})
+
 export const tokenizeStruct = (structName: string, schema: Schema) => {
     if (typeof structName !== "string" || structName.length < 1) {
-        return {token: null, msg: `Invalid name. Name must be a non-empty string (got name=${String(structName)}, type=${typeof structName}).`}
+        return res(`Invalid name. Name must be a non-empty string (got name=${String(structName)}, type=${typeof structName}).`)
     }
     const schemaType = typeof schema
     if (schemaType !== "object" || schema === null || Array.isArray(schema)) {
-        return {token: null, msg: `Invalid schema for "${structName}". Schema must an object with valid one of valid data types (${DATA_TYPES.join(", ")}. Got type=${typeof schema}).`}
+        return res(`Invalid schema for "${structName}". Schema must an object with valid one of valid data types (${DATA_TYPES.join(", ")}. Got type=${typeof schema}).`)
     }
     const originalFields = Object.keys(schema)
     if (originalFields.length < 1 || originalFields.length > MAX_FIELDS) {
-        return {token: null, msg: `invalid schema for "${structName}". Schema must have between 1 and ${MAX_FIELDS} fields, got=${originalFields.length}.`}
+        return res(`invalid schema for "${structName}". Schema must have between 1 and ${MAX_FIELDS} fields, got=${originalFields.length}.`)
     }
 
     type_64bit[len_index] = 0, type_32bit[len_index] = 0
@@ -70,13 +72,14 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
     for (let i = 0; i < fields.length; i++) {
         const name = fields[i]
         if (!validFieldName(name)) {
-            return {token: null, msg: `field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}".`}
+            return res(`field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}".`)
         }
-        switch (schema[name]) {
+        const type = schema[name]
+        switch (type) {
             case "i64":
             case "u64":
             case "f64":
-            case "num": 
+            case "number": 
                 type_64bit[type_64bit[len_index]++] = i; break;
             case "i32": 
             case "u32": 
@@ -87,8 +90,10 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
                 type_16bit[type_16bit[len_index]++] = i; break;
             case "i8": 
             case "u8": 
-            case "bool":
+            case "boolean":
                 type_8bit[type_8bit[len_index]++] = i; break;
+            default:
+                return res(`field "${name}" of "${structName}" is an unknown type (got=${type}, accepted=${DATA_TYPES.join(", ")})."`)
         }
     }
 
@@ -110,5 +115,5 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
 
     token.bytes = bytes
     token.paddingBytes = dividedBy64bits
-    return {token, msg: "successfully tokenized"}
+    return res("success", token)
 }
