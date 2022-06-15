@@ -1,5 +1,5 @@
 import {Struct, Schema} from "./types"
-import {StructToken, INDEX_METHOD} from "./tokenizer"
+import {StructToken, INDEX_METHOD, tokenizeStruct} from "./tokenizer"
 
 export interface Heap { heap_dataview: DataView }
 
@@ -13,14 +13,14 @@ export type StructArray<S extends Schema> = {
 
 const USE_LITTLE_ENDIAN = true
 
-export const generateArrayView = <S extends Schema>(token: StructToken) => {
+const generateArrayView = <S extends Schema>(token: StructToken) => {
     const {bytes, paddingBytes} = token
     const View = function(this: StructArray<S>, heap: Heap, ptr: number) {
         this["@@heap"] = heap
         this["@@ptr"] = ptr
         this["@@cursor"] = 0
         this["@@debug"] = {bytesPerElement: bytes, padding: paddingBytes}
-    } as unknown as {new(): StructArray<S>}
+    } as unknown as { new(): StructArray<S> }
 
     /* set name of 'View' for debugging purposes */
     const viewName = `${token.name}Array`
@@ -38,6 +38,26 @@ export const generateArrayView = <S extends Schema>(token: StructToken) => {
     for (let i = 0; i < fields.length; i++) {
         const {name, offset, type} = fields[i]
         switch (type) {
+            case "i64":
+                Object.defineProperty(methods, name, {
+                    get(this: StructArray<S>) {
+                        return this["@@heap"].heap_dataview.getBigInt64(this["@@cursor"] + offset, USE_LITTLE_ENDIAN)
+                    },
+                    set(this: StructArray<S>, val: bigint) {
+                        this["@@heap"].heap_dataview.setBigInt64(this["@@cursor"] + offset, val, USE_LITTLE_ENDIAN)
+                    }
+                })
+                break
+            case "u64":
+                Object.defineProperty(methods, name, {
+                    get(this: StructArray<S>) {
+                        return this["@@heap"].heap_dataview.getBigUint64(this["@@cursor"] + offset, USE_LITTLE_ENDIAN)
+                    },
+                    set(this: StructArray<S>, val: bigint) {
+                        this["@@heap"].heap_dataview.setBigUint64(this["@@cursor"] + offset, val, USE_LITTLE_ENDIAN)
+                    }
+                })
+                break
             case "f64":
             case "num":
                 Object.defineProperty(methods, name, {
@@ -133,4 +153,13 @@ export const generateArrayView = <S extends Schema>(token: StructToken) => {
     }
     View.prototype = methods
     return View
+}
+
+export const compile = <S extends Schema>(name: string, schema: S) => {
+    const {token, msg} = tokenizeStruct(name, schema)
+    if (token === null) {
+        return {token, msg, view: null}
+    } else {
+        return {token, msg, view: generateArrayView(token)}
+    }
 }

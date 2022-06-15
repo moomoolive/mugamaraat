@@ -42,6 +42,8 @@ const addFieldTokens = (elementBytes: number, schema: Schema, nameIndexes: Int32
     return offset
 }
 
+/* create buffers once and reuse for entire lifetime of 
+library, to make compiler faster */
 const type_buffer = () => new Int32Array(MAX_FIELDS + 1)
 const type_64bit = type_buffer() 
 const type_32bit = type_buffer() 
@@ -71,8 +73,10 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
             return {token: null, msg: `field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}".`}
         }
         switch (schema[name]) {
-            case "num": 
+            case "i64":
+            case "u64":
             case "f64":
+            case "num": 
                 type_64bit[type_64bit[len_index]++] = i; break;
             case "i32": 
             case "u32": 
