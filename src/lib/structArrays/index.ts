@@ -1,5 +1,6 @@
 export {DATA_TYPES} from "./types"
-export type {
-    Type, bool, i32, f32, f64, num, Primitive,
-    Schema, Struct
-} from "./types"
+export type {Type, Primitive, Schema, Struct} from "./types"
+export {tokenizeStruct, MAX_FIELDS} from "./tokenizer"
+export {StructToken} from "./tokenizer"
+export {generateArrayView} from "./generator"
+export type {Heap, StructArray} from "./generator"
