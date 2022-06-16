@@ -28,27 +28,43 @@ are always the same - regardless of the host runtime.*/
 const alignFields = (fields: string[]) => fields.sort()
 
 export const MAX_FIELDS = 9
-const len_index = MAX_FIELDS
 
-const addFieldTokens = (elementBytes: number, schema: Schema, nameIndexes: Int32Array, tokens: FieldToken[], currentOffset: number, names: string[]) => {
+
+
+const MEMORY_LAYOUT_VARIANTS = 4
+const META_DATA_PER_VARIANT = 1
+/* create buffer once and reuse for entire lifetime of 
+library, to make compiler faster */
+const typeVariantBuffer = new Int32Array(
+    (MAX_FIELDS + META_DATA_PER_VARIANT) * MEMORY_LAYOUT_VARIANTS
+)
+const ptrsStart = 4
+const variant_64bit = 0
+const ptr_64bitStart = ptrsStart + (variant_64bit * MAX_FIELDS)
+const variant_32bit = 1
+const ptr_32bitStart = ptrsStart + (variant_32bit * MAX_FIELDS)
+const variant_16bit = 2
+const ptr_16bitStart = ptrsStart + (variant_16bit * MAX_FIELDS)
+const variant_8bit = 3
+const ptr_8bitStart = ptrsStart + (variant_8bit * MAX_FIELDS)
+
+const tokenizeMemoryVariant = (
+    elementBytes: number, schema: Schema, 
+    tokens: FieldToken[], ptrOffset: number, 
+    currentOffset: number, names: string[],
+    variantId: number
+) => {
     let offset = currentOffset
-    const len = nameIndexes[len_index]
-    for (let i = 0; i < len; i++) {
-        const name = names[nameIndexes[i]]
+    const count = typeVariantBuffer[variantId]
+    const len = ptrOffset + count
+    for (let i = ptrOffset; i < len; i++) {
+        const name = names[typeVariantBuffer[i]]
         const type = schema[name]
         tokens.push({name, type, offset})
         offset += elementBytes
     }
     return offset
 }
-
-/* create buffers once and reuse for entire lifetime of 
-library, to make compiler faster */
-const type_buffer = () => new Int32Array(MAX_FIELDS + 1)
-const type_64bit = type_buffer() 
-const type_32bit = type_buffer() 
-const type_16bit = type_buffer()
-const type_8bit = type_buffer()
 
 const res = (msg: string, token: null | StructToken = null) => ({token, msg})
 
@@ -65,46 +81,81 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
         return res(`invalid schema for "${structName}". Schema must have between 1 and ${MAX_FIELDS} fields, got=${originalFields.length}.`)
     }
 
-    type_64bit[len_index] = 0, type_32bit[len_index] = 0
-    type_16bit[len_index] = 0, type_8bit[len_index] = 0
+    typeVariantBuffer[variant_64bit] = 0
+    typeVariantBuffer[variant_32bit] = 0
+    typeVariantBuffer[variant_16bit] = 0
+    typeVariantBuffer[variant_8bit] = 0
     
     const fields = alignFields(originalFields)
     for (let i = 0; i < fields.length; i++) {
         const name = fields[i]
         if (!validFieldName(name)) {
-            return res(`field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}".`)
+            return res(`field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}" or be named "${INDEX_METHOD}".`)
         }
         const type = schema[name]
         switch (type) {
             case "i64":
             case "u64":
             case "f64":
-            case "number": 
-                type_64bit[type_64bit[len_index]++] = i; break;
+            case "number": {
+                const count = typeVariantBuffer[variant_64bit]++
+                typeVariantBuffer[ptr_64bitStart + count] = i 
+                break
+            }
             case "i32": 
             case "u32": 
-            case "f32":
-                type_32bit[type_32bit[len_index]++] = i; break;
+            case "f32": {
+                const count = typeVariantBuffer[variant_32bit]++
+                typeVariantBuffer[ptr_32bitStart + count] = i 
+                break
+            }
             case "i16": 
-            case "u16":
-                type_16bit[type_16bit[len_index]++] = i; break;
+            case "u16": {
+                const count = typeVariantBuffer[variant_16bit]++
+                typeVariantBuffer[ptr_16bitStart + count] = i 
+                break
+            }
             case "i8": 
             case "u8": 
-            case "boolean":
-                type_8bit[type_8bit[len_index]++] = i; break;
+            case "boolean": {
+                const count = typeVariantBuffer[variant_8bit]++
+                typeVariantBuffer[ptr_8bitStart + count] = i 
+                break
+            }
             default:
                 return res(`field "${name}" of "${structName}" is an unknown type (got=${type}, accepted=${DATA_TYPES.join(", ")})."`)
         }
     }
 
-    const token = new StructToken(structName, JSON.stringify(schema))
+    const token = new StructToken(
+        structName, JSON.stringify(schema)
+    )
     let bytes = 0
 
     const bytesIn64bits = 8
-    bytes = addFieldTokens(bytesIn64bits, schema, type_64bit, token.fields, bytes, fields)
-    bytes = addFieldTokens(4, schema, type_32bit, token.fields, bytes, fields)
-    bytes = addFieldTokens(2, schema, type_16bit, token.fields, bytes, fields)
-    bytes = addFieldTokens(1, schema, type_8bit, token.fields, bytes, fields)
+    bytes = tokenizeMemoryVariant(
+        bytesIn64bits, schema, 
+        token.fields, ptr_64bitStart, 
+        bytes, fields, variant_64bit
+    )
+    
+    bytes = tokenizeMemoryVariant(
+        4, schema,
+        token.fields, ptr_32bitStart, 
+        bytes, fields, variant_32bit
+    )
+
+    bytes = tokenizeMemoryVariant(
+        2, schema,
+        token.fields, ptr_16bitStart, 
+        bytes, fields, variant_16bit
+    )
+    
+    bytes = tokenizeMemoryVariant(
+        1, schema,
+        token.fields, ptr_8bitStart, 
+        bytes, fields, variant_8bit
+    )
 
     /* all structs are aligned to 8 bytes */
     const dividedBy64bits = bytes % bytesIn64bits

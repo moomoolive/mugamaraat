@@ -123,6 +123,52 @@ describe("generates correct keys for schema", () => {
     })
 })
 
+describe("views with multiple data types", () => {
+    it("can mix i32, f32, f64", () => {
+        const {view} = compile("animation", {state: "i32", f: "f32", i6: "f64"})
+        if (!view) {
+            throw TypeError("compiler didn't compile valid schema correctly")
+        }
+        const elements = 2
+        const heap = {dataview: new DataView(new ArrayBuffer(view.debug.bytes * elements))}
+        const ptr = 0
+        const array = new view.Factory(heap, ptr)
+        const el = array.index(0)
+        el.f = 1.3
+        el.i6 = 1.3
+        el.state = 1.3
+        expect(el.f).toBe(Math.fround(1.3))
+        expect(el.i6).toBe(1.3)
+        expect(el.state).toBe(1)
+    })
+
+    it("can mix u8, i16, i32, f64", () => {
+        const {view} = compile("animation", {
+            state: "i32", 
+            f: "i16", 
+            i6: "f64",
+            b: "u8"
+        })
+        if (!view) {
+            throw TypeError("compiler didn't compile valid schema correctly")
+        }
+        const elements = 2
+        const heap = {dataview: new DataView(new ArrayBuffer(view.debug.bytes * elements))}
+        const ptr = 0
+        const array = new view.Factory(heap, ptr)
+        const el = array.index(0)
+        el.f = 1.3
+        el.i6 = 1.3
+        el.state = 1.3
+        el.b = 1.3
+        expect(el.f).toBe(1)
+        expect(el.i6).toBe(1.3)
+        expect(el.state).toBe(1)
+        expect(el.b).toBe(1)
+        console.log(view)
+    })
+})
+
 describe("correct types are generated for schema", () => {
     it("i64 is a 64-bit signed integer", () => {
         const {view} = compile("animation", {state: "i64"})
