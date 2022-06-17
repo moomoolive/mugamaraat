@@ -165,7 +165,6 @@ describe("views with multiple data types", () => {
         expect(el.i6).toBe(1.3)
         expect(el.state).toBe(1)
         expect(el.b).toBe(1)
-        console.log(view)
     })
 })
 

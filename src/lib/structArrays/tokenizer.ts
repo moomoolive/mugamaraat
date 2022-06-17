@@ -49,7 +49,7 @@ const variant_8bit = 3
 const ptr_8bitStart = ptrsStart + (variant_8bit * MAX_FIELDS)
 
 const tokenizeMemoryVariant = (
-    elementBytes: number, schema: Schema, 
+    variantByteSize: number, schema: Schema, 
     tokens: FieldToken[], ptrOffset: number, 
     currentOffset: number, names: string[],
     variantId: number
@@ -61,12 +61,17 @@ const tokenizeMemoryVariant = (
         const name = names[typeVariantBuffer[i]]
         const type = schema[name]
         tokens.push({name, type, offset})
-        offset += elementBytes
+        offset += variantByteSize
     }
     return offset
 }
 
 const res = (msg: string, token: null | StructToken = null) => ({token, msg})
+
+const bytesIn64bits = 8
+const bytesIn32bits = 4
+const bytesIn16bits = 2
+const bytesIn8bits = 1
 
 export const tokenizeStruct = (structName: string, schema: Schema) => {
     if (typeof structName !== "string" || structName.length < 1) {
@@ -78,19 +83,24 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
     }
     const originalFields = Object.keys(schema)
     if (originalFields.length < 1 || originalFields.length > MAX_FIELDS) {
-        return res(`invalid schema for "${structName}". Schema must have between 1 and ${MAX_FIELDS} fields, got=${originalFields.length}.`)
+        return res(`Invalid schema for "${structName}". Schema must have between 1 and ${MAX_FIELDS} fields, got=${originalFields.length}.`)
     }
 
     typeVariantBuffer[variant_64bit] = 0
     typeVariantBuffer[variant_32bit] = 0
     typeVariantBuffer[variant_16bit] = 0
     typeVariantBuffer[variant_8bit] = 0
+
+    let b64_used = 0
+    let b32_used = 0
+    let b16_used = 0
+    let b8_used = 0
     
     const fields = alignFields(originalFields)
     for (let i = 0; i < fields.length; i++) {
         const name = fields[i]
         if (!validFieldName(name)) {
-            return res(`field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}" or be named "${INDEX_METHOD}".`)
+            return res(`Field name "${name}" of "${structName}" cannot start with "${INTERNAL_FIELD_PREFIX}" or be named "${INDEX_METHOD}".`)
         }
         const type = schema[name]
         switch (type) {
@@ -98,6 +108,7 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
             case "u64":
             case "f64":
             case "number": {
+                b64_used = bytesIn64bits
                 const count = typeVariantBuffer[variant_64bit]++
                 typeVariantBuffer[ptr_64bitStart + count] = i 
                 break
@@ -105,12 +116,14 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
             case "i32": 
             case "u32": 
             case "f32": {
+                b32_used = bytesIn32bits
                 const count = typeVariantBuffer[variant_32bit]++
                 typeVariantBuffer[ptr_32bitStart + count] = i 
                 break
             }
             case "i16": 
             case "u16": {
+                b16_used = bytesIn16bits
                 const count = typeVariantBuffer[variant_16bit]++
                 typeVariantBuffer[ptr_16bitStart + count] = i 
                 break
@@ -118,12 +131,13 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
             case "i8": 
             case "u8": 
             case "boolean": {
+                b8_used = bytesIn8bits
                 const count = typeVariantBuffer[variant_8bit]++
                 typeVariantBuffer[ptr_8bitStart + count] = i 
                 break
             }
             default:
-                return res(`field "${name}" of "${structName}" is an unknown type (got=${type}, accepted=${DATA_TYPES.join(", ")})."`)
+                return res(`Field "${name}" of "${structName}" is an unknown type (got=${type}, accepted=${DATA_TYPES.join(", ")})."`)
         }
     }
 
@@ -132,7 +146,6 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
     )
     let bytes = 0
 
-    const bytesIn64bits = 8
     bytes = tokenizeMemoryVariant(
         bytesIn64bits, schema, 
         token.fields, ptr_64bitStart, 
@@ -140,31 +153,59 @@ export const tokenizeStruct = (structName: string, schema: Schema) => {
     )
     
     bytes = tokenizeMemoryVariant(
-        4, schema,
+        bytesIn32bits, schema,
         token.fields, ptr_32bitStart, 
         bytes, fields, variant_32bit
     )
 
     bytes = tokenizeMemoryVariant(
-        2, schema,
+        bytesIn16bits, schema,
         token.fields, ptr_16bitStart, 
         bytes, fields, variant_16bit
     )
     
     bytes = tokenizeMemoryVariant(
-        1, schema,
+        bytesIn8bits, schema,
         token.fields, ptr_8bitStart, 
         bytes, fields, variant_8bit
     )
 
-    /* all structs are aligned to 8 bytes */
-    const dividedBy64bits = bytes % bytesIn64bits
-    const alignedTo64bits = dividedBy64bits === 0
-    if (!alignedTo64bits) {
-        bytes += dividedBy64bits
+    let usedMemoryVariants = (
+        b64_used + b32_used + b16_used + b8_used
+    )
+    let largestMemoryVariant = 0
+
+    switch(usedMemoryVariants) {
+        case 8: /* only 64bit */
+        case 12: /* 64bit & 32bit */
+        case 14: /* 64bit & 32bit & 16bit */
+        case 15: /* 64bit & 32bit & 16bit & 8bit */
+            largestMemoryVariant = bytesIn64bits
+            break
+        case 4: /* only 32bit */
+        case 6: /* 32bit & 16bit */
+        case 7: /* 32bit & 16bit & 8bit */
+            largestMemoryVariant = bytesIn32bits
+            break
+        case 2: /* only 16bit */
+        case 3: /* 16bit & 8bit */
+            largestMemoryVariant = bytesIn16bits
+            break
+        case 1: /* only 8bit */
+            largestMemoryVariant = bytesIn8bits
+            break
+    }
+
+    /* add padding to end of structs to comply with alignment 
+    of largest memory variant used */
+    const bytesToAlignment = bytes % largestMemoryVariant
+    const naturallyAligned = bytesToAlignment === 0
+    if (!naturallyAligned) {
+        const padding = largestMemoryVariant - bytesToAlignment
+        bytes += padding
+        token.paddingBytes = padding
     }
 
     token.bytes = bytes
-    token.paddingBytes = dividedBy64bits
-    return res("success", token)
+    return res("ok", token)
 }
