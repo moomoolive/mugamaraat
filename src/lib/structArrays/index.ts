@@ -3,7 +3,7 @@ export const DATA_TYPES = Object.freeze([
     "i64", "u64", "f64",
     "i32", "u32", "f32", 
     "i16", "u16", 
-    "u8", "i8", 
+    "i8", "u8",
     "boolean",
 ] as const)
 
